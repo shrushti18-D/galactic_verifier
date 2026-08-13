@@ -1,0 +1,22 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environment
+venv/
+env/
+ENV/
+
+# Streamlit local settings
+.streamlit/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary data exports
+*.tmp
+*.log
