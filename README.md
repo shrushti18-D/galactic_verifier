@@ -43,7 +43,7 @@ AI-Powered B2B Lead Classification Engine & Manufacturing Capability Matching We
 ### 1. Installation
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/galactic_verifier.git
+git clone https://github.com/shrushti-18D/galactic_verifier.git
 cd galactic_verifier
 
 # Install dependencies
