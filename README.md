@@ -1,6 +1,6 @@
-# 🚀 Galactic 3D Company Relevance Analyzer
+# 🚀 Galactic 3D Company Relevance Analyzer & Business Intelligence Engine
 
-AI-Powered B2B Lead Classification Engine & Manufacturing Capability Matching Web Application.
+A complete B2B business intelligence and lead qualification engine. Simply provide company names, categories, and service keywords, and the system automatically cleans data, evaluates manufacturing capability relevance, and classifies target businesses into **GOOD**, **MODERATE**, and **BAD** leads with downloadable Excel reports.
 
 ![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red.svg)
@@ -9,14 +9,19 @@ AI-Powered B2B Lead Classification Engine & Manufacturing Capability Matching We
 
 ---
 
-## 🏬 Overview
+## 🏬 Executive Summary & Business Intelligence Overview
 
-**Galactic 3D Relevance Analyzer** is an end-to-end B2B sales lead qualification platform designed for Galactic 3D's manufacturing capabilities. It cleans company datasets, extracts manufacturing skills from PDF brochures using PyMuPDF, evaluates company relevance across 8 target industry verticals using SentenceTransformers & TF-IDF vector similarity, and exports clean, qualified Excel reports.
+This application acts as a comprehensive **Company Relevance & Capability Analyzer**. It gives sales and business development teams complete visibility into any company by analyzing their service keywords and industry categories against target manufacturing capabilities:
+
+- 🔍 **Input**: Upload company spreadsheets or provide company keywords (`Company Name`, `Industry Category`, `Services/Keywords`, `City/Location`).
+- ⚡ **Automated Intelligence**: Automatically cleans duplicates, normalizes company profiles, and extracts manufacturing capabilities from PDF brochures using PyMuPDF.
+- 🎯 **Classification Output**: Evaluates relevance scores (0 to 100) and classifies leads into **GOOD (≥75)**, **MODERATE**, and **BAD** leads.
+- 📥 **Export**: Download qualified lead lists filtered by location with clean original Excel columns.
 
 ---
 
-### 🎯 Supported 8 Target Verticals
-1. **Automotive**: Automobile, OEM, auto parts, engine components, transmission, suspension, pistons, shock absorbers, tyres/tubes, auto accessories.
+### 🎯 Supported 8 Target Industry Verticals & Keywords
+1. **Automotive**: Automobile, OEM, auto parts, autoparts, engine components, transmission, suspension, pistons, shock absorbers, tyres/tubes, auto accessories.
 2. **Aerospace**: Aircraft, aviation, turbine blades, jet engines, rocket components, satellite hardware, flight MRO.
 3. **Medical**: MedTech, medical devices, surgical instruments, orthopedic tools, dental guides.
 4. **Defense**: Military, naval, missile components, propulsion systems, UAV, defense R&D.
@@ -27,7 +32,7 @@ AI-Powered B2B Lead Classification Engine & Manufacturing Capability Matching We
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
 - 🧹 **Data Cleaning & Deduplication**: Auto-detects columns, normalizes text, drops duplicate companies, emails, websites, and exact duplicate rows.
 - 📄 **PyMuPDF Brochure Extraction**: Reads brochure PDFs and extracts core manufacturing capabilities page-by-page.
@@ -43,7 +48,7 @@ AI-Powered B2B Lead Classification Engine & Manufacturing Capability Matching We
 ### 1. Installation
 ```bash
 # Clone the repository
-git clone https://github.com/shrushti-18D/galactic_verifier.git
+git clone https://github.com/shrushti18-D/galactic_verifier.git
 cd galactic_verifier
 
 # Install dependencies
