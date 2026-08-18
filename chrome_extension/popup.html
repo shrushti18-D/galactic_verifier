@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galactic Verifier</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            width: 420px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #0b0f19;
+            color: #f1f5f9;
+            line-height: 1.5;
+        }
+
+        /* Header Styling */
+        .header {
+            padding: 16px 20px;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #312e81 100%);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(90deg, #60a5fa, #a78bfa, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header-subtitle {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 2px;
+        }
+
+        /* Navigation Tabs */
+        .tab-bar {
+            display: flex;
+            background: #111827;
+            border-bottom: 1px solid #1e293b;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 10px 12px;
+            background: transparent;
+            border: none;
+            color: #94a3b8;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-bottom: 2px solid transparent;
+        }
+
+        .tab-btn.active {
+            color: #38bdf8;
+            border-bottom-color: #38bdf8;
+            background: rgba(56, 189, 248, 0.05);
+        }
+
+        .container {
+            padding: 16px;
+        }
+
+        /* Current Page Card */
+        .info-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 14px;
+        }
+
+        .info-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #64748b;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .info-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: #e2e8f0;
+            word-break: break-all;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Input Controls */
+        .form-group {
+            margin-bottom: 12px;
+        }
+
+        label {
+            display: block;
+            font-size: 11px;
+            font-weight: 600;
+            color: #cbd5e1;
+            margin-bottom: 4px;
+        }
+
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 8px 10px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #f8fafc;
+            font-size: 12px;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+        }
+
+        .file-dropzone {
+            border: 2px dashed #3b82f6;
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            background: rgba(59, 130, 246, 0.05);
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .file-dropzone:hover {
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        /* Primary Action Buttons */
+        .btn-primary {
+            width: 100%;
+            padding: 11px;
+            background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+            border: none;
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            width: 100%;
+            padding: 8px 12px;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #94a3b8;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+
+        .btn-secondary:hover {
+            background: #334155;
+            color: #f1f5f9;
+        }
+
+        /* Results Display Card */
+        .result-box {
+            display: none;
+            margin-top: 16px;
+            background: #0f172a;
+            border: 1px solid #1e293b;
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .result-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 800;
+            letter-spacing: 0.04em;
+            margin-bottom: 12px;
+        }
+
+        .badge-good {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(52, 211, 153, 0.4);
+        }
+
+        .badge-moderate {
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(251, 191, 36, 0.4);
+        }
+
+        .badge-bad {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(248, 113, 113, 0.4);
+        }
+
+        /* Score Progress Bar */
+        .score-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+
+        .score-val {
+            font-size: 22px;
+            font-weight: 800;
+            color: #f8fafc;
+        }
+
+        .progress-track {
+            height: 8px;
+            background: #1e293b;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 14px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .fill-good { background: #10b981; }
+        .fill-moderate { background: #f59e0b; }
+        .fill-bad { background: #ef4444; }
+
+        /* Meta Data Grid */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .meta-item {
+            background: #161e2e;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1px solid #1e293b;
+        }
+
+        .meta-item .key {
+            font-size: 10px;
+            color: #64748b;
+            font-weight: 600;
+        }
+
+        .meta-item .val {
+            font-size: 12px;
+            color: #e2e8f0;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Capability Chips */
+        .chip-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+            margin-bottom: 12px;
+        }
+
+        .chip {
+            background: rgba(56, 189, 248, 0.1);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.25);
+            padding: 4px 9px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .reason-box {
+            font-size: 11px;
+            color: #cbd5e1;
+            background: #161e2e;
+            border-left: 3px solid #3b82f6;
+            padding: 8px 10px;
+            border-radius: 4px;
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+
+        /* Loading & Error States */
+        .status-msg {
+            display: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            text-align: center;
+            margin-top: 14px;
+        }
+
+        .loading-spin {
+            background: rgba(56, 189, 248, 0.08);
+            border: 1px solid rgba(56, 189, 248, 0.2);
+            color: #38bdf8;
+        }
+
+        .error-msg {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            color: #f87171;
+            text-align: left;
+        }
+
+        .spin-icon {
+            display: inline-block;
+            animation: spin 1s infinite linear;
+            margin-right: 6px;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="header-title">
+            <span>🚀</span> GALACTIC VERIFIER
+        </div>
+        <div class="header-subtitle">
+            B2B Company Relevance & Manufacturing Intelligence
+        </div>
+    </div>
+
+    <div class="tab-bar">
+        <button class="tab-btn active" id="tabWebBtn">🌐 Analyze Website</button>
+        <button class="tab-btn" id="tabPdfBtn">📄 Analyze PDF Brochure</button>
+    </div>
+
+    <div class="container">
+
+        <!-- MODE 1: WEBSITE ANALYSIS -->
+        <div id="modeWeb">
+            <div class="info-card">
+                <div class="info-label">Active Webpage / Company Domain</div>
+                <div class="info-value" id="currentDomain">Detecting active browser tab...</div>
+            </div>
+
+            <!-- Manual Override Expander -->
+            <div id="manualInputBox" style="display: none;" class="form-group">
+                <label for="manualCoName">Company Name / Information</label>
+                <input type="text" id="manualCoName" placeholder="e.g. Apex Precision Aerospace Ltd">
+                <label for="manualDesc" style="margin-top: 8px;">Industry / Services Summary</label>
+                <textarea id="manualDesc" rows="2" placeholder="e.g. Aerospace CNC precision machining, 3D printing..."></textarea>
+            </div>
+
+            <button class="btn-primary" id="analyzeWebBtn">
+                ⚡ ANALYZE COMPANY
+            </button>
+            <button class="btn-secondary" id="toggleManualBtn" style="display: none;">
+                ✏️ Edit Company Details Manually
+            </button>
+        </div>
+
+        <!-- MODE 2: BROCHURE PDF ANALYSIS -->
+        <div id="modePdf" style="display: none;">
+            <div class="file-dropzone" id="dropzone">
+                <input type="file" id="pdfFileInput" accept=".pdf" style="display: none;">
+                <div style="font-size: 24px; margin-bottom: 6px;">📄</div>
+                <div style="font-size: 12px; font-weight: 600; color: #e2e8f0;" id="fileLabel">
+                    Click to Select PDF Brochure
+                </div>
+                <div style="font-size: 10px; color: #64748b; margin-top: 2px;">
+                    Supports PyMuPDF multi-page capability extraction
+                </div>
+            </div>
+
+            <button class="btn-primary" id="analyzePdfBtn" style="margin-top: 12px;">
+                🔍 ANALYZE BROCHURE PDF
+            </button>
+        </div>
+
+        <!-- LOADING SPINNER -->
+        <div class="status-msg loading-spin" id="loadingState">
+            <span class="spin-icon">⚡</span> AI Neural Network Analyzing Company...
+        </div>
+
+        <!-- ERROR MESSAGE -->
+        <div class="status-msg error-msg" id="errorState"></div>
+
+        <!-- RESULTS DISPLAY CARD -->
+        <div class="result-box" id="resultCard">
+
+            <div id="badgeContainer"></div>
+
+            <div class="score-row">
+                <span style="font-size: 11px; color: #94a3b8; font-weight: 600;">Match Score</span>
+                <span class="score-val" id="scoreVal">0.0</span>
+            </div>
+
+            <div class="progress-track">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+
+            <div class="meta-grid">
+                <div class="meta-item">
+                    <div class="key">COMPANY</div>
+                    <div class="val" id="resCompanyName">-</div>
+                </div>
+                <div class="meta-item">
+                    <div class="key">CATEGORY</div>
+                    <div class="val" id="resCategory">-</div>
+                </div>
+            </div>
+
+            <div id="capabilitiesSection">
+                <div class="info-label">Matched Capabilities</div>
+                <div class="chip-group" id="chipGroup"></div>
+            </div>
+
+            <div id="summarySection">
+                <div class="info-label">Relevance Analysis Reason</div>
+                <div class="reason-box" id="resReason">-</div>
+            </div>
+
+            <button class="btn-secondary" id="resetBtn">
+                🔄 Analyze Another Company
+            </button>
+        </div>
+
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
