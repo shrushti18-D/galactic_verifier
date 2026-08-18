@@ -68,9 +68,10 @@ INDUSTRY_SYNONYMS = {
     ],
 
     "3d printing": [
-        "3D printing", "3d printing services", "industrial 3d printing", "custom 3d printing",
-        "additive manufacturing", "metal additive manufacturing", "polymer 3d printing",
-        "metal 3D printing", "metal AM", "DMLS", "dmls printing", "SLM", "slm 3d printing",
+        "3D printing", "3d printing", "3d metal printing", "3D metal printing", "metal 3D printing",
+        "metal 3d printing", "metal printing", "3d printing services", "industrial 3d printing",
+        "custom 3d printing", "additive manufacturing", "metal additive manufacturing",
+        "polymer 3d printing", "metal AM", "DMLS", "dmls printing", "SLM", "slm 3d printing",
         "LPBF", "laser powder bed fusion", "direct metal laser sintering", "selective laser melting",
         "SLS", "sls 3d printing", "SLA", "sla 3d printing", "FDM", "fdm 3d printing",
         "rapid prototyping", "DfAM", "design for additive manufacturing", "generative design",
@@ -80,7 +81,7 @@ INDUSTRY_SYNONYMS = {
 
     "cnc machining": [
         "cnc", "cnc machining", "cnc milling", "cnc turning", "precision machining",
-        "precision components", "wire edm", "lathe", "tool room", "tooling", "tooling solutions",
+        "precision components", "precision", "wire edm", "lathe", "tool room", "tooling", "tooling solutions",
         "jigs & fixtures", "jig and fixture manufacturing", "die casting"
     ],
 
