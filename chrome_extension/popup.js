@@ -56,17 +56,23 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- DETECT ACTIVE BROWSER TAB ---
     async function initCurrentTab() {
+        currentDomainEl.innerText = "Active Webpage";
+
         try {
+            if (!chrome || !chrome.tabs) {
+                showManualBox();
+                return;
+            }
+
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (!tab || !tab.url) {
-                currentDomainEl.innerText = "No active webpage detected";
-                showManualBox();
+                currentDomainEl.innerText = "Current Browser Tab";
                 return;
             }
 
             const url = tab.url;
             if (url.startsWith("chrome://") || url.startsWith("edge://") || url.startsWith("about:") || url.startsWith("chrome-extension://")) {
-                currentDomainEl.innerText = "Browser System Page (Use Manual Entry)";
+                currentDomainEl.innerText = "System Page (Manual Entry Mode)";
                 showManualBox();
                 return;
             }
@@ -104,9 +110,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 };
             }
         } catch (err) {
-            console.error("Tab initialization error:", err);
-            currentDomainEl.innerText = "Current Browser Tab";
-            showManualBox();
+            console.warn("Tab initialization warning:", err);
+            currentDomainEl.innerText = "Active Browser Tab";
         }
     }
 
@@ -161,11 +166,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function showManualBox() {
         manualInputBox.style.display = "block";
-        toggleManualBtn.style.display = "block";
+        toggleManualBtn.innerText = "🙈 Hide Manual Fields";
     }
 
     toggleManualBtn.addEventListener("click", () => {
-        if (manualInputBox.style.display === "none") {
+        if (manualInputBox.style.display === "none" || !manualInputBox.style.display) {
             manualInputBox.style.display = "block";
             toggleManualBtn.innerText = "🙈 Hide Manual Fields";
         } else {
@@ -327,7 +332,8 @@ document.addEventListener("DOMContentLoaded", () => {
         chipGroup.innerHTML = "";
         const topKws = data.top_keywords || [];
         topKws.forEach(kw => {
-            const chip.className = "chip";
+            const chip = document.createElement("span");
+            chip.className = "chip";
             chip.innerText = `• ${kw}`;
             chipGroup.appendChild(chip);
         });
