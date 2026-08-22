@@ -56,35 +56,37 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- DETECT ACTIVE BROWSER TAB ---
     async function initCurrentTab() {
-        currentDomainEl.innerText = "Active Webpage";
-
         try {
             if (!chrome || !chrome.tabs) {
+                currentDomainEl.innerText = "Manual Entry Mode";
                 showManualBox();
                 return;
             }
 
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (!tab || !tab.url) {
-                currentDomainEl.innerText = "Current Browser Tab";
+            if (!tab) {
+                currentDomainEl.innerText = "No Active Webpage";
                 return;
             }
 
-            const url = tab.url;
-            if (url.startsWith("chrome://") || url.startsWith("edge://") || url.startsWith("about:") || url.startsWith("chrome-extension://")) {
+            let rawUrl = tab.url || tab.pendingUrl || "";
+            let tabTitle = tab.title || "";
+
+            if (!rawUrl || rawUrl.startsWith("chrome://") || rawUrl.startsWith("edge://") || rawUrl.startsWith("about:") || rawUrl.startsWith("chrome-extension://")) {
                 currentDomainEl.innerText = "System Page (Manual Entry Mode)";
                 showManualBox();
                 return;
             }
 
+            // Extract display domain
             try {
-                const parsed = new URL(url);
+                const parsed = new URL(rawUrl);
                 currentDomainEl.innerText = parsed.hostname.replace(/^www\./, "");
             } catch (e) {
-                currentDomainEl.innerText = url;
+                currentDomainEl.innerText = rawUrl;
             }
 
-            // Attempt content extraction via Scripting API
+            // Execute content script on active tab
             if (chrome.scripting && tab.id) {
                 try {
                     const [results] = await chrome.scripting.executeScript({
@@ -102,16 +104,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
             if (!currentTabData) {
                 currentTabData = {
-                    url: tab.url,
-                    title: tab.title || "",
-                    description: "",
-                    content: tab.title || "",
+                    url: rawUrl,
+                    title: tabTitle,
+                    description: tabTitle,
+                    content: tabTitle,
                     companyName: ""
                 };
             }
         } catch (err) {
             console.warn("Tab initialization warning:", err);
-            currentDomainEl.innerText = "Active Browser Tab";
+            currentDomainEl.innerText = "Active Webpage";
         }
     }
 

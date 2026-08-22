@@ -5,9 +5,11 @@
   "description": "AI-powered B2B company relevance analyzer & PDF brochure capability extractor for Galactic 3D",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
+    "*://*/*",
     "http://127.0.0.1:8000/*",
     "http://localhost:8000/*"
   ],
