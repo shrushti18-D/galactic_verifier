@@ -63,7 +63,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            // 1. Query normal browser window active tabs
+            // Query active tab
             let tabs = await chrome.tabs.query({ active: true, windowType: "normal" });
             if (!tabs || tabs.length === 0) {
                 tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -72,29 +72,35 @@ document.addEventListener("DOMContentLoaded", () => {
                 tabs = await chrome.tabs.query({ active: true });
             }
 
-            // Find first tab with http/https URL
-            let tab = tabs.find(t => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://"))) || tabs[0];
+            let tab = tabs ? (tabs.find(t => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://"))) || tabs[0]) : null;
 
             if (!tab) {
-                currentDomainEl.innerText = "No Active Webpage";
+                currentDomainEl.innerText = "Active Webpage";
                 return;
             }
 
             let rawUrl = tab.url || tab.pendingUrl || "";
             let tabTitle = tab.title || "";
 
-            if (!rawUrl || rawUrl.startsWith("chrome://") || rawUrl.startsWith("edge://") || rawUrl.startsWith("about:") || rawUrl.startsWith("chrome-extension://")) {
+            let isSystemPage = rawUrl.startsWith("chrome://") || rawUrl.startsWith("edge://") || rawUrl.startsWith("about:") || rawUrl.startsWith("chrome-extension://");
+
+            if (isSystemPage) {
                 currentDomainEl.innerText = "System Page (Manual Entry Mode)";
                 showManualBox();
                 return;
             }
 
-            // Extract display domain
-            try {
-                const parsed = new URL(rawUrl);
-                currentDomainEl.innerText = parsed.hostname.replace(/^www\./, "");
-            } catch (e) {
-                currentDomainEl.innerText = rawUrl;
+            if (rawUrl) {
+                try {
+                    const parsed = new URL(rawUrl);
+                    currentDomainEl.innerText = parsed.hostname.replace(/^www\./, "");
+                } catch (e) {
+                    currentDomainEl.innerText = rawUrl;
+                }
+            } else if (tabTitle) {
+                currentDomainEl.innerText = tabTitle.split("|")[0].split("-")[0].trim();
+            } else {
+                currentDomainEl.innerText = "Active Webpage";
             }
 
             // Execute content script on active webpage tab
@@ -107,6 +113,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     if (results && results.result) {
                         currentTabData = results.result;
+                        if (currentTabData.url) {
+                            try {
+                                const parsed = new URL(currentTabData.url);
+                                currentDomainEl.innerText = parsed.hostname.replace(/^www\./, "");
+                            } catch (e) {}
+                        }
                     }
                 } catch (err) {
                     console.warn("Scripting extraction fallback:", err);
