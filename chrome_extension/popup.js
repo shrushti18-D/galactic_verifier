@@ -63,7 +63,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            // Query active tab in the focused browser window
+            let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            if (!tabs || tabs.length === 0) {
+                tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            }
+
+            // Filter out chrome-extension:// popup context window if present
+            let tab = tabs.find(t => t.url && !t.url.startsWith("chrome-extension://")) || tabs[0];
+
             if (!tab) {
                 currentDomainEl.innerText = "No Active Webpage";
                 return;
@@ -86,7 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 currentDomainEl.innerText = rawUrl;
             }
 
-            // Execute content script on active tab
+            // Execute content script on active webpage tab
             if (chrome.scripting && tab.id) {
                 try {
                     const [results] = await chrome.scripting.executeScript({
