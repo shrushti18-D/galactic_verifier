@@ -63,14 +63,17 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
 
-            // Query active tab in the focused browser window
-            let tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            // 1. Query normal browser window active tabs
+            let tabs = await chrome.tabs.query({ active: true, windowType: "normal" });
             if (!tabs || tabs.length === 0) {
-                tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+                tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            }
+            if (!tabs || tabs.length === 0) {
+                tabs = await chrome.tabs.query({ active: true });
             }
 
-            // Filter out chrome-extension:// popup context window if present
-            let tab = tabs.find(t => t.url && !t.url.startsWith("chrome-extension://")) || tabs[0];
+            // Find first tab with http/https URL
+            let tab = tabs.find(t => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://"))) || tabs[0];
 
             if (!tab) {
                 currentDomainEl.innerText = "No Active Webpage";
