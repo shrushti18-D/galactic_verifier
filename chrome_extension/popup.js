@@ -31,6 +31,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const progressFill = document.getElementById("progressFill");
     const resCompanyName = document.getElementById("resCompanyName");
     const resCategory = document.getElementById("resCategory");
+    const resVendorStatus = document.getElementById("resVendorStatus");
     const chipGroup = document.getElementById("chipGroup");
     const resReason = document.getElementById("resReason");
 
@@ -207,7 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- MODE 1: ANALYZE WEBPAGE COMPANY ---
     analyzeWebBtn.addEventListener("click", async () => {
         hideResults();
-        showLoading("⚡ AI Neural Network Analyzing Company...");
+        showLoading("⚡ AI Neural Network & Vendor Intent Engine Analyzing Company...");
 
         const manualCo = (manualCoName.value || "").trim();
         const manualD = (manualDesc.value || "").trim();
@@ -321,10 +322,16 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         progressFill.className = `progress-fill ${fillClass}`;
-        badgeContainer.innerHTML = `<span class="result-badge ${badgeClass}">${badgeIcon} ${resultClass} MATCH</span>`;
+
+        const vendorBadge = data.has_vendor_intent ? `<span class="result-badge badge-good">🟢 WITH VENDORS</span>` : `<span class="result-badge badge-bad">🔴 WITHOUT VENDORS</span>`;
+        badgeContainer.innerHTML = `<span class="result-badge ${badgeClass}">${badgeIcon} ${resultClass} MATCH</span> ${vendorBadge}`;
 
         resCompanyName.innerText = data.company_name || data.domain || "Target Company";
         resCategory.innerText = data.category || "General Manufacturing";
+        if (resVendorStatus) {
+            resVendorStatus.innerText = data.vendor_status || "Without Vendors (No Vendor Need 🔴)";
+            resVendorStatus.style.color = data.has_vendor_intent ? "#34d399" : "#f87171";
+        }
 
         chipGroup.innerHTML = "";
         const caps = data.matched_capabilities || [];
@@ -353,6 +360,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         resCompanyName.innerText = data.filename || "Uploaded PDF";
         resCategory.innerText = `${data.total_pages} Pages Processed`;
+        if (resVendorStatus) {
+            resVendorStatus.innerText = "PDF Brochure Document";
+            resVendorStatus.style.color = "#38bdf8";
+        }
 
         chipGroup.innerHTML = "";
         const topKws = data.top_keywords || [];
