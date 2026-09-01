@@ -208,7 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- MODE 1: ANALYZE WEBPAGE COMPANY ---
     analyzeWebBtn.addEventListener("click", async () => {
         hideResults();
-        showLoading("⚡ AI Neural Network & Vendor Intent Engine Analyzing Company...");
+        showLoading("⚡ Contextual Scikit-Learn & Playwright Engine Analyzing...");
 
         const manualCo = (manualCoName.value || "").trim();
         const manualD = (manualDesc.value || "").trim();
@@ -303,6 +303,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const score = data.match_score || 0.0;
         const resultClass = data.result || "BAD";
+        const vStatus = data.vendor_status || "Uncertain / Insufficient Evidence 🟡";
 
         scoreVal.innerText = `${score.toFixed(1)}`;
         progressFill.style.width = `${Math.min(Math.max(score, 5), 100)}%`;
@@ -323,14 +324,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
         progressFill.className = `progress-fill ${fillClass}`;
 
-        const vendorBadge = data.has_vendor_intent ? `<span class="result-badge badge-good">🟢 WITH VENDORS</span>` : `<span class="result-badge badge-bad">🔴 WITHOUT VENDORS</span>`;
-        badgeContainer.innerHTML = `<span class="result-badge ${badgeClass}">${badgeIcon} ${resultClass} MATCH</span> ${vendorBadge}`;
+        let vendorBadgeHtml = `<span class="result-badge badge-moderate">🟡 UNCERTAIN EVIDENCE</span>`;
+        let vendorColor = "#fbbf24";
+
+        if (vStatus.includes("Active Buyer")) {
+            vendorBadgeHtml = `<span class="result-badge badge-good">🟢 WITH VENDORS</span>`;
+            vendorColor = "#34d399";
+        } else if (vStatus.includes("No Relevant Vendor Need")) {
+            vendorBadgeHtml = `<span class="result-badge badge-bad">🔴 WITHOUT VENDORS</span>`;
+            vendorColor = "#f87171";
+        }
+
+        badgeContainer.innerHTML = `<span class="result-badge ${badgeClass}">${badgeIcon} ${resultClass} MATCH</span> ${vendorBadgeHtml}`;
 
         resCompanyName.innerText = data.company_name || data.domain || "Target Company";
         resCategory.innerText = data.category || "General Manufacturing";
+
         if (resVendorStatus) {
-            resVendorStatus.innerText = data.vendor_status || "Without Vendors (No Vendor Need 🔴)";
-            resVendorStatus.style.color = data.has_vendor_intent ? "#34d399" : "#f87171";
+            resVendorStatus.innerText = vStatus;
+            resVendorStatus.style.color = vendorColor;
         }
 
         chipGroup.innerHTML = "";

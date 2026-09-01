@@ -9,7 +9,7 @@ vectorized matrix operations, phrase-aware keyword matching, and complete combin
 import os
 import re
 import difflib
-from typing import List, Dict, Tuple, Optional, Set
+from typing import List, Dict, Tuple, Optional, Set, Any
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -109,6 +109,19 @@ INDUSTRY_SYNONYMS = {
     ]
 }
 
+# Authoritative Manufacturing Procurement & Buyer Intent Corpus for Contextual Scoring
+PROCUREMENT_BUYER_CORPUS = """
+seeking manufacturing suppliers approved vendor registration issuing RFQ for precision components
+supplier portal onboarding vendor empanelment subcontracting CNC machining and 3D printing parts
+purchasing industrial hardware procurement of aerospace components vendor list registration
+become a supplier vendor management sourcing team supplier registration
+"""
+
+EXCLUDED_SELF_VENDOR_CORPUS = """
+we are an IT vendor vendor of software services digital marketing agency legal services vendor
+catering vendor cloud hosting provider software developers UI designers
+"""
+
 
 @st.cache_resource(show_spinner=False)
 def load_sentence_transformer_model(model_name: str = "all-MiniLM-L6-v2"):
@@ -176,170 +189,218 @@ def compute_vector_similarities_offline(
         return np.full(num_rows, 50.0)
 
 
+def score_procurement_buyer_intent(text: str, url: str = "") -> Dict[str, Any]:
+    """
+    Contextual Procurement Buyer Intent Scoring using Scikit-Learn TF-IDF + Cosine Similarity.
+    Differentiates between active buyers seeking vendors vs. self-referential IT/catering vendors.
+
+    Returns a 3-state classification:
+    - 'With Vendors (Active Buyer 🟢)'
+    - 'Without Vendors (No Relevant Vendor Need 🔴)'
+    - 'Uncertain / Insufficient Evidence 🟡'
+    """
+    text_lower = text.lower()
+    url_lower = url.lower()
+
+    # Fast affirmative in-house check for 'Without Vendors'
+    inhouse_terms = ["100% in-house", "captive unit", "single-site manufacturing", "zero third-party outsourcing", "in-house tool room only"]
+    if any(term in text_lower for term in inhouse_terms):
+        return {
+            "status": "Without Vendors (No Relevant Vendor Need 🔴)",
+            "has_intent": False,
+            "confidence": 0.90,
+            "intent_score": 10.0,
+            "signals": ["Affirmative In-House Manufacturing Only"],
+            "reason": "Explicit evidence of 100% in-house manufacturing / zero external vendor requirement."
+        }
+
+    # Extract procurement signals
+    procurement_terms = [
+        "vendor registration", "vendor list", "approved vendor", "approved supplier",
+        "supplier portal", "vendor portal", "issue rfq", "rfq", "rfp", "procurement",
+        "subcontracting", "subcontractor", "vendor empanelment", "supplier onboarding",
+        "seeking suppliers", "seeking vendors", "become a supplier", "sourcing",
+        "purchasing", "supplier management"
+    ]
+
+    matched_signals = []
+    for pterm in procurement_terms:
+        if re.search(r'\b' + re.escape(pterm) + r'\b', text_lower):
+            matched_signals.append(pterm.title())
+
+    for path_term in ["vendor", "supplier", "procurement", "rfq", "subcontract", "sourcing"]:
+        if path_term in url_lower:
+            matched_signals.append(f"URL ({path_term.title()})")
+
+    matched_signals = list(dict.fromkeys(matched_signals))
+
+    # Scikit-Learn TF-IDF Contextual Similarity Check
+    try:
+        corpus = [PROCUREMENT_BUYER_CORPUS, EXCLUDED_SELF_VENDOR_CORPUS, text_lower]
+        vectorizer = TfidfVectorizer(ngram_range=(1, 2), max_features=300, stop_words='english')
+        tfidf_matrix = vectorizer.fit_transform(corpus)
+
+        buyer_vec = tfidf_matrix[0:1]
+        self_vec = tfidf_matrix[1:2]
+        doc_vec = tfidf_matrix[2:3]
+
+        buyer_sim = float(cosine_similarity(doc_vec, buyer_vec)[0][0] * 100.0)
+        self_sim = float(cosine_similarity(doc_vec, self_vec)[0][0] * 100.0)
+    except Exception:
+        buyer_sim = 20.0 if matched_signals else 0.0
+        self_sim = 0.0
+
+    # Decision Matrix
+    is_self_referential = self_sim > (buyer_sim * 1.3) and "we are a vendor" in text_lower
+
+    if matched_signals and buyer_sim >= 15.0 and not is_self_referential:
+        return {
+            "status": "With Vendors (Active Buyer 🟢)",
+            "has_intent": True,
+            "confidence": min(0.95, round(0.70 + (buyer_sim / 200.0), 2)),
+            "intent_score": round(min(100.0, 60.0 + buyer_sim), 1),
+            "signals": matched_signals,
+            "reason": f"Strong contextual evidence of supplier/procurement activity (Signals: {', '.join(matched_signals[:3])})."
+        }
+    elif is_self_referential:
+        return {
+            "status": "Uncertain / Insufficient Evidence 🟡",
+            "has_intent": False,
+            "confidence": 0.40,
+            "intent_score": 30.0,
+            "signals": matched_signals,
+            "reason": "Text mentions vendor terminology self-referentially (e.g. IT/service provider), not as an active buyer."
+        }
+    else:
+        # Default 3-state fallback when evidence is missing or ambiguous
+        return {
+            "status": "Uncertain / Insufficient Evidence 🟡",
+            "has_intent": False,
+            "confidence": 0.50,
+            "intent_score": 40.0,
+            "signals": [],
+            "reason": "No sufficient procurement portal or supplier onboarding evidence found on scanned pages."
+        }
+
+
 def evaluate_single_keyword_overlap(
     kw_str: str,
-    galactic_keywords: List[str],
-    galactic_patterns: List[Tuple[str, re.Pattern]]
+    target_keywords: List[str]
 ) -> Tuple[float, List[str]]:
     """
-    Evaluates keyword overlap for a single keyword string against Galactic target terms.
+    Evaluates phrase-aware keyword overlap.
     """
-    if not kw_str or kw_str.strip() == "":
+    if not kw_str or not target_keywords:
         return 0.0, []
 
-    kw_clean = kw_str.lower()
-    matched_words = []
+    kw_clean = str(kw_str).lower()
+    matched = []
 
-    # 1. Exact & Regex Pattern Match
-    for orig_kw, pattern in galactic_patterns:
-        if pattern.search(kw_clean) or orig_kw.lower() in kw_clean:
-            matched_words.append(orig_kw)
-
-    # 2. Industry & Material Synonym Match
+    # 1. Check exact taxonomy matches
     for main_domain, synonyms in INDUSTRY_SYNONYMS.items():
         for syn in synonyms:
-            if syn in kw_clean:
-                matched_words.append(main_domain.title())
-                break
+            syn_lower = syn.lower()
+            if re.search(r'\b' + re.escape(syn_lower) + r'\b', kw_clean):
+                matched.append(syn.title())
 
-    # Deduplicate preserving order
-    matched_words = list(dict.fromkeys(matched_words))
+    # 2. Check target brochure keywords
+    for target in target_keywords:
+        target_lower = str(target).lower()
+        if len(target_lower) > 2 and re.search(r'\b' + re.escape(target_lower) + r'\b', kw_clean):
+            matched.append(target.title())
 
-    count = len(matched_words)
-    if count >= 3:
-        score = 100.0
-    elif count == 2:
-        score = 80.0
-    elif count == 1:
-        score = 60.0
-    else:
-        score = 0.0
+    unique_matched = list(dict.fromkeys(matched))
 
-    return score, matched_words
+    if not unique_matched:
+        return 0.0, []
 
-
-def fast_phrase_keyword_scoring(
-    company_keywords: List[str],
-    galactic_keywords: List[str]
-) -> Tuple[np.ndarray, List[List[str]]]:
-    """
-    Ultra-fast phrase-aware keyword matching across all rows.
-    """
-    num_rows = len(company_keywords)
-    kw_scores = np.zeros(num_rows)
-    matched_kws_all = [[] for _ in range(num_rows)]
-
-    if not galactic_keywords or num_rows == 0:
-        return kw_scores, matched_kws_all
-
-    galactic_patterns = []
-    for g_kw in galactic_keywords:
-        pattern = re.compile(r'\b' + re.escape(g_kw.lower()) + r'\b', re.IGNORECASE)
-        galactic_patterns.append((g_kw, pattern))
-
-    kw_cache: Dict[str, Tuple[float, List[str]]] = {}
-
-    for i in range(num_rows):
-        raw_kw = company_keywords[i]
-        if raw_kw not in kw_cache:
-            kw_cache[raw_kw] = evaluate_single_keyword_overlap(raw_kw, galactic_keywords, galactic_patterns)
-
-        score, matched = kw_cache[raw_kw]
-        kw_scores[i] = score
-        matched_kws_all[i] = matched
-
-    return kw_scores, matched_kws_all
-
-
-def evaluate_single_category_match(
-    cat_str: str,
-    galactic_keywords: List[str]
-) -> Tuple[float, Optional[str]]:
-    """
-    Evaluates industry category string against Galactic target vertical taxonomy.
-    """
-    if not cat_str or cat_str.strip() == "":
-        return 0.0, None
-
-    cat_clean = cat_str.lower().strip()
-    galactic_lower = [k.lower() for k in galactic_keywords]
-
-    # 1. Industry Synonym Match
-    for main_domain, synonyms in INDUSTRY_SYNONYMS.items():
-        for syn in synonyms:
-            if syn in cat_clean:
-                return 100.0, main_domain.title()
-
-    # 2. Direct Substring Match
-    for idx, g_kw in enumerate(galactic_lower):
-        if g_kw in cat_clean or cat_clean in g_kw:
-            return 100.0, galactic_keywords[idx]
-
-    # 3. Fuzzy Check Fallback
-    best_ratio = 0.0
-    best_term = None
-    for idx, g_kw in enumerate(galactic_lower):
-        ratio = difflib.SequenceMatcher(None, cat_clean, g_kw).ratio() * 100.0
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_term = galactic_keywords[idx]
-
-    if best_ratio >= 60:
-        return best_ratio, best_term
-    elif best_ratio >= 40:
-        return best_ratio * 0.7, best_term
-    else:
-        return max(best_ratio * 0.3, 0.0), None
+    score = min(100.0, len(unique_matched) * 35.0)
+    return score, unique_matched
 
 
 def fast_vectorized_category_scoring(
-    company_categories: List[str],
+    categories: List[str],
     galactic_keywords: List[str]
-) -> Tuple[np.ndarray, List[Optional[str]]]:
+) -> Tuple[np.ndarray, List[List[str]]]:
     """
-    Vectorized category matching against Galactic capability taxonomy.
+    Fast vectorized category scoring.
     """
-    num_rows = len(company_categories)
+    num_rows = len(categories)
     cat_scores = np.zeros(num_rows)
-    matched_cats = [None] * num_rows
+    matched_categories: List[List[str]] = [[] for _ in range(num_rows)]
 
-    cat_cache: Dict[str, Tuple[float, Optional[str]]] = {}
+    target_cats = set(INDUSTRY_SYNONYMS.keys())
+    for kw in galactic_keywords:
+        kw_lower = kw.lower()
+        if kw_lower in INDUSTRY_SYNONYMS:
+            target_cats.add(kw_lower)
 
-    for i in range(num_rows):
-        cat_raw = company_categories[i]
-        if cat_raw not in cat_cache:
-            cat_cache[cat_raw] = evaluate_single_category_match(cat_raw, galactic_keywords)
+    for i, cat_text in enumerate(categories):
+        if not cat_text:
+            continue
+        cat_lower = str(cat_text).lower()
+        matched = []
 
-        score, term = cat_cache[cat_raw]
-        cat_scores[i] = score
-        matched_cats[i] = term
+        for target_cat in target_cats:
+            synonyms = INDUSTRY_SYNONYMS.get(target_cat, [target_cat])
+            for syn in synonyms:
+                if re.search(r'\b' + re.escape(syn.lower()) + r'\b', cat_lower):
+                    matched.append(target_cat.title())
+                    break
 
-    return cat_scores, matched_cats
+        unique_matched = list(dict.fromkeys(matched))
+        matched_categories[i] = unique_matched
+
+        if unique_matched:
+            cat_scores[i] = min(100.0, len(unique_matched) * 45.0)
+
+    return cat_scores, matched_categories
+
+
+def fast_phrase_keyword_scoring(
+    keywords_list: List[str],
+    galactic_keywords: List[str]
+) -> Tuple[np.ndarray, List[List[str]]]:
+    """
+    Fast phrase keyword scoring.
+    """
+    num_rows = len(keywords_list)
+    kw_scores = np.zeros(num_rows)
+    matched_kws: List[List[str]] = [[] for _ in range(num_rows)]
+
+    for i, kw_str in enumerate(keywords_list):
+        score, matched = evaluate_single_keyword_overlap(kw_str, galactic_keywords)
+        kw_scores[i] = score
+        matched_kws[i] = matched
+
+    return kw_scores, matched_kws
 
 
 def generate_reason(
     matched_keywords: List[str],
-    category_match: Optional[str],
+    matched_categories: List[str],
     similarity_score: float,
     final_score: float
 ) -> str:
     """
-    Constructs a clear, human-readable reason string for classification auditing.
+    Generates human-readable classification reason.
     """
     reasons = []
 
     if matched_keywords:
-        kw_str = ", ".join(matched_keywords[:4])
-        if len(matched_keywords) > 4:
-            kw_str += f" (+{len(matched_keywords)-4} more)"
+        top_kws = matched_keywords[:4]
+        more_count = len(matched_keywords) - 4
+        kw_str = ", ".join(top_kws)
+        if more_count > 0:
+            kw_str += f" (+{more_count} more)"
         reasons.append(f"Matched keywords: {kw_str}")
 
-    if category_match:
-        reasons.append(f"Category matched ({category_match})")
+    if matched_categories:
+        reasons.append(f"Category matched ({', '.join(matched_categories)})")
 
     reasons.append(f"Semantic similarity: {similarity_score:.1f}%")
 
-    if not matched_keywords and not category_match and final_score < 45:
+    if not matched_keywords and not matched_categories and final_score < 45:
         return "No target vertical overlap found; low semantic relevance to Galactic 3D."
 
     return " | ".join(reasons)
@@ -353,18 +414,12 @@ def analyze_companies_batch(
     progress_callback=None
 ) -> pd.DataFrame:
     """
-    Ultra-Fast Machine Learning Batch Analysis Engine with Complete Combined Galactic Taxonomy.
-
-    :param df: Cleaned company pandas DataFrame.
-    :param column_mapping: Dictionary mapping canonical fields to DF columns.
-    :param galactic_profile: Capability profile dict from brochure_reader.py.
-    :param batch_size: Size of batch for vector encoding.
-    :param progress_callback: Optional Streamlit progress callback function (current, total, stage).
-    :return: DataFrame enriched with 'Match Score', 'Result', and 'Reason' columns.
+    Ultra-Fast Machine Learning Batch Analysis Engine with 3-State Vendor Classification.
     """
     if df.empty:
         df["Match Score"] = []
         df["Result"] = []
+        df["Vendor Status"] = []
         df["Reason"] = []
         return df
 
@@ -381,16 +436,22 @@ def analyze_companies_batch(
     co_col = column_mapping.get("co_name")
     cat_col = column_mapping.get("category")
     kw_col = column_mapping.get("keywords")
+    web_col = column_mapping.get("website")
 
     co_list = df[co_col].astype(str).tolist() if co_col and co_col in df.columns else [""] * len(df)
     cat_list = df[cat_col].astype(str).tolist() if cat_col and cat_col in df.columns else [""] * len(df)
     kw_list = df[kw_col].astype(str).tolist() if kw_col and kw_col in df.columns else [""] * len(df)
+    web_list = df[web_col].astype(str).tolist() if web_col and web_col in df.columns else [""] * len(df)
 
     company_descriptions: List[str] = []
+    vendor_statuses: List[str] = []
+    vendor_reasons: List[str] = []
+
     for i in range(num_rows):
         co_name = co_list[i]
         category = cat_list[i]
         keywords = kw_list[i]
+        website = web_list[i]
 
         desc_parts = []
         if co_name:
@@ -404,6 +465,11 @@ def analyze_companies_batch(
         if not text_snippet.strip():
             text_snippet = "Company profile unknown."
         company_descriptions.append(text_snippet)
+
+        # Scikit-Learn Contextual Procurement Intent Scoring
+        proc_eval = score_procurement_buyer_intent(text_snippet, website)
+        vendor_statuses.append(proc_eval["status"])
+        vendor_reasons.append(proc_eval["reason"])
 
     if progress_callback:
         progress_callback(30, f"Phase 1/2: Vectorizing {num_rows:,} company profiles...")
@@ -419,15 +485,23 @@ def analyze_companies_batch(
     if progress_callback:
         progress_callback(90, "Finalizing Classifications (GOOD / MODERATE / BAD)...")
 
-    # Final Weighted Score Calculation (40% Category, 40% Keywords, 20% Similarity)
+    # Final Weighted Score Calculation
     final_scores = (0.40 * cat_scores) + (0.40 * kw_scores) + (0.20 * similarity_scores)
+
+    # Adjust final scores based on Vendor Status
+    for i in range(num_rows):
+        status = vendor_statuses[i]
+        if status == "With Vendors (Active Buyer 🟢)":
+            final_scores[i] = min(100.0, final_scores[i] + 15.0)
+        elif status == "Without Vendors (No Relevant Vendor Need 🔴)":
+            final_scores[i] = min(35.0, final_scores[i])
+
     final_scores = np.round(np.clip(final_scores, 0.0, 100.0), 1)
 
-    # Classifications: GOOD >= 75, MODERATE >= 45, BAD < 45
     results = np.where(final_scores >= 75.0, "GOOD", np.where(final_scores >= 45.0, "MODERATE", "BAD")).tolist()
 
     reasons = [
-        generate_reason(matched_kws_all[i], matched_cats[i], similarity_scores[i], final_scores[i])
+        f"Vendor Status: {vendor_statuses[i]} | {generate_reason(matched_kws_all[i], matched_cats[i], similarity_scores[i], final_scores[i])}"
         for i in range(num_rows)
     ]
 
@@ -437,6 +511,7 @@ def analyze_companies_batch(
     df_result = df.copy()
     df_result["Match Score"] = final_scores.tolist()
     df_result["Result"] = results
+    df_result["Vendor Status"] = vendor_statuses
     df_result["Reason"] = reasons
 
     return df_result

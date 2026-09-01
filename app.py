@@ -1,40 +1,48 @@
 """
 app.py
-Galactic 3D Company Relevance Analyzer - Main Streamlit Web Application.
-
-A complete production-ready application to clean company data, extract Galactic 3D's
-manufacturing capabilities from brochures using PyMuPDF, analyze company relevance using
-SentenceTransformers (all-MiniLM-L6-v2) & cosine similarity, and classify companies into
-GOOD, MODERATE, and BAD categories with downloadable formatted Excel reports and City/State filtering.
+Production-Grade Offline-First Streamlit Dashboard Application for Galactic 3D.
+Features complete combined Galactic taxonomy, batch company relevance analysis,
+PyMuPDF brochure capability extraction, city/state filtering, and automated Excel reporting.
 """
 
 import os
 import io
-from typing import Optional, Dict, List
+import re
+import math
+from typing import Dict, List, Optional, Tuple, Any
+import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
 
-# Import project modules
-from cleaner import detect_column_mapping, clean_dataset
-from brochure_reader import read_all_brochures, read_pdf_bytes, extract_capabilities
-from analyzer import analyze_companies_batch
-from utils import (
-    apply_custom_css,
-    plot_classification_pie,
-    plot_score_histogram,
-    plot_top_keywords_bar,
+from cleaner import (
+    load_and_clean_dataset,
+    detect_canonical_columns,
     generate_excel_download,
-    generate_sample_dataset
+    get_streamlined_dataframe
 )
+from brochure_reader import (
+    extract_text_from_pdf,
+    extract_capabilities,
+    get_sample_galactic_profile
+)
+from analyzer import (
+    analyze_companies_batch,
+    INDUSTRY_SYNONYMS
+)
+from utils import apply_custom_css, render_footer
 
-
-# Configure Page Title & Layout
+# Configure Streamlit Page
 st.set_page_config(
-    page_title="Galactic 3D Relevance Analyzer",
+    page_title="Galactic 3D Company Relevance Analyzer",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Apply global custom CSS styling
+apply_custom_css()
 
 
 def initialize_session_state():
@@ -119,287 +127,264 @@ def parse_file_cached(file_bytes: bytes, file_name: str) -> pd.DataFrame:
         return pd.read_excel(bio)
     except Exception:
         bio.seek(0)
-        return pd.read_csv(bio, low_memory=False, encoding='latin1')
+        return pd.read_csv(bio, low_memory=False, encoding='utf-8', on_bad_lines='skip')
 
 
-def load_uploaded_file(uploaded_file) -> Optional[pd.DataFrame]:
-    """Helper to parse uploaded Excel or CSV file into pandas DataFrame with visual spinner."""
-    try:
-        file_bytes = uploaded_file.read()
-        df = parse_file_cached(file_bytes, uploaded_file.name)
-        return df
-    except Exception as e:
-        st.error(f"Error loading file: {str(e)}")
-        return None
+def plot_classification_pie(df: pd.DataFrame):
+    """Generates interactive Plotly Donut Pie Chart for GOOD / MODERATE / BAD distribution."""
+    if "Result" not in df.columns or df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No classification data available")
+        return fig
+
+    counts = df["Result"].value_counts().reset_index()
+    counts.columns = ["Result", "Count"]
+
+    color_map = {
+        "GOOD": "#10b981",      # Emerald Green
+        "MODERATE": "#f59e0b",  # Amber Yellow
+        "BAD": "#ef4444"        # Rose Red
+    }
+
+    fig = px.pie(
+        counts,
+        names="Result",
+        values="Count",
+        hole=0.45,
+        title="Lead Classification Distribution",
+        color="Result",
+        color_discrete_map=color_map
+    )
+    fig.update_traces(
+        textposition='inside',
+        textinfo='percent+label+value',
+        hovertemplate="<b>%{label}</b><br>Count: %{value:,}<br>Percentage: %{percent:.1%}<extra></extra>"
+    )
+    fig.update_layout(
+        margin=dict(t=40, b=20, l=20, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
+        height=320
+    )
+    return fig
 
 
-def get_streamlined_dataframe(df: pd.DataFrame, mapping: Dict[str, Optional[str]]) -> pd.DataFrame:
-    """
-    Constructs a streamlined, clean DataFrame containing key relevance fields:
-    Company Name, Category, Keywords, City/Location, Match Score, Result (GOOD/MODERATE/BAD), and Reason.
-    """
-    co_col = mapping.get("co_name")
-    cat_col = mapping.get("category")
-    kw_col = mapping.get("keywords")
-    city_col = mapping.get("city")
+def plot_score_histogram(df: pd.DataFrame):
+    """Generates score distribution histogram."""
+    if "Match Score" not in df.columns or df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No score data available")
+        return fig
 
-    result_df = pd.DataFrame()
+    fig = px.histogram(
+        df,
+        x="Match Score",
+        nbins=20,
+        title="Match Score Distribution (0 - 100)",
+        color="Result",
+        color_discrete_map={"GOOD": "#10b981", "MODERATE": "#f59e0b", "BAD": "#ef4444"},
+        range_x=[0, 100]
+    )
+    fig.update_layout(
+        xaxis_title="Match Score",
+        yaxis_title="Number of Companies",
+        margin=dict(t=40, b=20, l=20, r=20),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
+        height=320
+    )
+    return fig
 
-    if co_col and co_col in df.columns:
-        result_df["Company Name"] = df[co_col]
-    elif "co_name" in df.columns:
-        result_df["Company Name"] = df["co_name"]
-    else:
-        result_df["Company Name"] = df.iloc[:, 0] if len(df.columns) > 0 else ""
 
-    if cat_col and cat_col in df.columns:
-        result_df["Category"] = df[cat_col]
-    elif "category" in df.columns:
-        result_df["Category"] = df["category"]
-    else:
-        result_df["Category"] = ""
+def plot_top_keywords_bar(df: pd.DataFrame):
+    """Plots top matched keywords bar chart."""
+    if "Reason" not in df.columns or df.empty:
+        fig = go.Figure()
+        fig.update_layout(title="No keyword insights available")
+        return fig
 
-    if kw_col and kw_col in df.columns:
-        result_df["Keywords"] = df[kw_col]
-    elif "keywords" in df.columns:
-        result_df["Keywords"] = df["keywords"]
-    else:
-        result_df["Keywords"] = ""
+    all_kws = []
+    for reason in df["Reason"].dropna():
+        if "Matched keywords:" in str(reason):
+            kw_part = str(reason).split("Matched keywords:")[1].split("|")[0].strip()
+            if "(+" in kw_part:
+                kw_part = kw_part.split("(+")[0].strip()
+            kws = [k.strip() for k in kw_part.split(",") if k.strip()]
+            all_kws.extend(kws)
 
-    if city_col and city_col in df.columns:
-        result_df["City / State"] = df[city_col]
-    elif "city" in df.columns:
-        result_df["City / State"] = df["city"]
-    else:
-        result_df["City / State"] = ""
+    if not all_kws:
+        fig = go.Figure()
+        fig.update_layout(title="No matched keyword tags found")
+        return fig
 
-    result_df["Match Score"] = df["Match Score"] if "Match Score" in df.columns else 0.0
-    result_df["Result"] = df["Result"] if "Result" in df.columns else "BAD"
-    result_df["Reason"] = df["Reason"] if "Reason" in df.columns else ""
+    kw_df = pd.Series(all_kws).value_counts().head(12).reset_index()
+    kw_df.columns = ["Keyword", "Frequency"]
 
-    return result_df
+    fig = px.bar(
+        kw_df,
+        x="Frequency",
+        y="Keyword",
+        orientation='h',
+        title="Top Matched Capability Keywords across Leads",
+        color="Frequency",
+        color_continuous_scale="Blues"
+    )
+    fig.update_layout(
+        yaxis=dict(autorange="reversed"),
+        margin=dict(t=40, b=20, l=20, r=20),
+        height=340
+    )
+    return fig
 
 
 def main():
-    apply_custom_css()
     initialize_session_state()
     render_header()
 
-    # Sidebar Options
+    # Sidebar Options & Controls
     with st.sidebar:
-        st.header("⚙️ Settings & Configuration")
-        st.markdown("---")
-        st.subheader("🤖 ML Model Options")
-        model_name = st.selectbox("SentenceTransformer Model", ["all-MiniLM-L6-v2"], index=0)
-        batch_size = st.slider("Vector Batch Size", min_value=64, max_value=512, value=128, step=64)
+        st.header("⚙️ Verifier Controls")
 
-        st.markdown("---")
-        st.subheader("📚 Brochure Source")
-        use_default_brochures = st.checkbox("Scan 'brochure/' folder", value=True)
-        uploaded_brochures = st.file_uploader("Upload Additional Brochure PDFs", type=["pdf"], accept_multiple_files=True)
-
-        st.markdown("---")
-        st.markdown(
-            """
-            **Classification Thresholds:**
-            - 🟢 **GOOD**: Score ≥ 75
-            - 🟡 **MODERATE**: 45 ≤ Score < 75
-            - 🔴 **BAD**: Score < 45
-
-            **Scoring Weights:**
-            - 40% Category Overlap
-            - 40% Keyword Match
-            - 20% Cosine Similarity
-            """
+        st.subheader("1. Galactic Capability Profile")
+        profile_mode = st.radio(
+            "Profile Source:",
+            ["Default Galactic 3D Profile", "Upload Custom PDF Brochure"],
+            index=0
         )
 
-    # Workflow Tabs
+        if profile_mode == "Upload Custom PDF Brochure":
+            uploaded_pdf = st.file_uploader("Upload PDF Brochure", type=["pdf"])
+            if uploaded_pdf is not None:
+                pdf_bytes = uploaded_pdf.read()
+                pdf_text, total_pages = extract_text_from_pdf(pdf_bytes, uploaded_pdf.name)
+                profile = extract_capabilities(pdf_text)
+                st.session_state["brochure_profile"] = profile
+                st.success(f"Extracted capabilities from '{uploaded_pdf.name}' ({total_pages} pages)!")
+            else:
+                st.session_state["brochure_profile"] = get_sample_galactic_profile()
+        else:
+            st.session_state["brochure_profile"] = get_sample_galactic_profile()
+
+        st.markdown("---")
+        st.subheader("2. Scoring Engine Weights")
+        st.info("⚡ Hybrid Weights: **40% Category Overlap + 40% Keyword Overlap + 20% Cosine Similarity**.")
+
+        st.markdown("---")
+        st.subheader("3. ML Batch Performance")
+        batch_size = st.slider("Batch Vector Processing Size", min_value=32, max_value=512, value=128, step=32)
+
+    # Main Workflow Tabs
     tab1, tab2, tab3, tab4 = st.tabs([
-        "1. 📥 Data Upload & Column Detection",
-        "2. 🧹 Data Cleaning",
-        "3. 📄 Galactic 3D Brochure Extraction",
-        "4. 📊 Relevance Analysis & Dashboard"
+        "📁 Step 1: Upload Dataset",
+        "🧹 Step 2: Clean & Deduplicate",
+        "📄 Step 3: Brochure Reader",
+        "📊 Step 4: Relevance Analysis"
     ])
 
     # =========================================================================
-    # TAB 1: DATA UPLOAD & COLUMN DETECTION
+    # TAB 1: UPLOAD DATASET
     # =========================================================================
     with tab1:
         st.subheader("Step 1: Upload Company Dataset")
-        col_up, col_sample = st.columns([3, 1])
+        st.write("Upload your company leads spreadsheet (CSV, XLSX, XLS) to begin relevance verification.")
 
-        with col_up:
-            uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx", "xls"])
-        with col_sample:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("✨ Load Sample Dataset", use_container_width=True):
-                sample_df = generate_sample_dataset()
-                st.session_state["raw_df"] = sample_df
-                st.session_state["cleaned_df"] = None
-                st.session_state["analyzed_df"] = None
-                st.session_state["last_uploaded_filename"] = "sample_dataset"
-                st.success("Loaded realistic sample dataset (20 companies with Cities)!")
+        uploaded_file = st.file_uploader(
+            "Choose a dataset file (CSV or Excel)",
+            type=["csv", "xlsx", "xls"],
+            key="file_uploader_tab1"
+        )
 
         if uploaded_file is not None:
-            if st.session_state.get("last_uploaded_filename") != uploaded_file.name:
-                with st.spinner("⚡ Reading & parsing company file... Please wait a moment!"):
-                    df = load_uploaded_file(uploaded_file)
-                    if df is not None:
-                        st.session_state["raw_df"] = df
-                        st.session_state["cleaned_df"] = None
-                        st.session_state["analyzed_df"] = None
-                        st.session_state["last_uploaded_filename"] = uploaded_file.name
-                        st.success(f"Successfully loaded file with {len(df):,} rows and {len(df.columns)} columns!")
+            file_bytes = uploaded_file.read()
+            raw_df = parse_file_cached(file_bytes, uploaded_file.name)
 
-        if st.session_state["raw_df"] is not None:
+            if raw_df is not None and not raw_df.empty:
+                st.session_state["raw_df"] = raw_df
+                st.session_state["last_uploaded_filename"] = uploaded_file.name
+
+                # Detect canonical column mapping automatically
+                mapping = detect_canonical_columns(raw_df)
+                st.session_state["column_mapping"] = mapping
+
+                st.success(f"Successfully loaded **{uploaded_file.name}** with **{len(raw_df):,} rows** and **{len(raw_df.columns)} columns**!")
+
+                st.subheader("Automatic Column Mapping Detected")
+                col_map_cols = st.columns(5)
+                with col_map_cols[0]:
+                    st.text_input("Company Name Column", value=mapping.get("co_name") or "Not Found", disabled=True)
+                with col_map_cols[1]:
+                    st.text_input("Category / Industry Column", value=mapping.get("category") or "Not Found", disabled=True)
+                with col_map_cols[2]:
+                    st.text_input("Keywords / Services Column", value=mapping.get("keywords") or "Not Found", disabled=True)
+                with col_map_cols[3]:
+                    st.text_input("Website Column", value=mapping.get("website") or "Not Found", disabled=True)
+                with col_map_cols[4]:
+                    st.text_input("City / Location Column", value=mapping.get("city") or "Not Found", disabled=True)
+
+                st.markdown("### Raw Dataset Preview")
+                st.dataframe(raw_df.head(50), use_container_width=True)
+
+        elif st.session_state.get("raw_df") is not None:
             raw_df = st.session_state["raw_df"]
-            st.markdown("### 📋 Raw Dataset Preview")
-            st.dataframe(raw_df.head(10), use_container_width=True)
-
-            st.markdown("### 🔍 Automatic Column Detection")
-            detected_map = detect_column_mapping(raw_df)
-
-            col1, col2, col3, col4, col5, col6 = st.columns(6)
-            all_cols = ["None"] + list(raw_df.columns)
-
-            with col1:
-                co_val = detected_map.get("co_name")
-                co_idx = all_cols.index(co_val) if co_val in all_cols else 0
-                sel_co = st.selectbox("Company Name", all_cols, index=co_idx)
-
-            with col2:
-                cat_val = detected_map.get("category")
-                cat_idx = all_cols.index(cat_val) if cat_val in all_cols else 0
-                sel_cat = st.selectbox("Category", all_cols, index=cat_idx)
-
-            with col3:
-                kw_val = detected_map.get("keywords")
-                kw_idx = all_cols.index(kw_val) if kw_val in all_cols else 0
-                sel_kw = st.selectbox("Keywords", all_cols, index=kw_idx)
-
-            with col4:
-                city_val = detected_map.get("city")
-                city_idx = all_cols.index(city_val) if city_val in all_cols else 0
-                sel_city = st.selectbox("City / State / Location", all_cols, index=city_idx)
-
-            with col5:
-                web_val = detected_map.get("website")
-                web_idx = all_cols.index(web_val) if web_val in all_cols else 0
-                sel_web = st.selectbox("Website", all_cols, index=web_idx)
-
-            with col6:
-                email_val = detected_map.get("email")
-                email_idx = all_cols.index(email_val) if email_val in all_cols else 0
-                sel_email = st.selectbox("Email", all_cols, index=email_idx)
-
-            st.session_state["column_mapping"] = {
-                "co_name": None if sel_co == "None" else sel_co,
-                "category": None if sel_cat == "None" else sel_cat,
-                "keywords": None if sel_kw == "None" else sel_kw,
-                "city": None if sel_city == "None" else sel_city,
-                "website": None if sel_web == "None" else sel_web,
-                "email": None if sel_email == "None" else sel_email
-            }
-
-            if not st.session_state["column_mapping"]["co_name"]:
-                st.warning("⚠️ Please select a valid Company Name column to proceed.")
+            st.info(f"Dataset **{st.session_state.get('last_uploaded_filename', '')}** loaded ({len(raw_df):,} rows).")
+            st.dataframe(raw_df.head(30), use_container_width=True)
 
     # =========================================================================
-    # TAB 2: DATA CLEANING
+    # TAB 2: CLEAN & DEDUPLICATE
     # =========================================================================
     with tab2:
-        st.subheader("Step 2: Clean Data & Deduplicate")
+        st.subheader("Step 2: Clean & Deduplicate Dataset")
 
-        if st.session_state["raw_df"] is None:
-            st.info("👈 Please upload a dataset in Step 1 first.")
+        if st.session_state.get("raw_df") is None:
+            st.warning("⚠️ Please upload a dataset in Step 1 first.")
         else:
             raw_df = st.session_state["raw_df"]
             mapping = st.session_state["column_mapping"]
 
-            col_btn, _ = st.columns([2, 3])
-            with col_btn:
-                if st.button("🧹 Clean & Deduplicate Dataset Now", type="primary", use_container_width=True):
-                    cleaned_df, stats = clean_dataset(raw_df, mapping)
+            st.write("Clean company names, remove duplicate websites/emails, and normalize text fields.")
+
+            if st.button("🧼 Run Cleaning & Deduplication Pipeline", type="primary"):
+                with st.spinner("Cleaning and deduplicating records..."):
+                    cleaned_df, stats = load_and_clean_dataset(raw_df, mapping)
                     st.session_state["cleaned_df"] = cleaned_df
                     st.session_state["clean_stats"] = stats
-                    st.session_state["analyzed_df"] = None
-                    st.success(f"Data cleaning completed! {stats['cleaned_count']:,} unique rows preserved, {stats['total_removed']:,} duplicates removed.")
-                    st.rerun()
 
-            if st.session_state["cleaned_df"] is not None:
+                st.success("Cleaning pipeline complete!")
+
+            if st.session_state.get("cleaned_df") is not None:
+                cdf = st.session_state["cleaned_df"]
                 stats = st.session_state["clean_stats"]
-                cleaned_df = st.session_state["cleaned_df"]
 
-                st.markdown("### 📊 Dataset Cleaning Summary")
-                c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    st.metric("Original Rows", f"{stats['original_count']:,}")
-                with c2:
-                    st.metric("Cleaned Rows", f"{stats['cleaned_count']:,}")
-                with c3:
-                    st.metric("Total Removed", f"{stats['total_removed']:,}")
-                with c4:
-                    st.metric("Duplicate Companies", f"{stats['duplicate_companies']:,}")
+                st.markdown("### Deduplication Summary")
+                s1, s2, s3, s4 = st.columns(4)
+                s1.metric("Original Records", f"{stats['original_count']:,}")
+                s2.metric("Unique Cleaned Records", f"{stats['cleaned_count']:,}")
+                s3.metric("Duplicates Removed", f"{stats['total_removed']:,}")
+                s4.metric("Deduplication Efficiency", f"{(stats['total_removed'] / max(1, stats['original_count']) * 100):.1f}%")
 
-                with st.expander("🔍 View Detailed Audit Breakdown", expanded=False):
-                    st.json({
-                        "Exact Duplicate Rows Removed": stats["exact_duplicates"],
-                        "Duplicate Company Names Removed": stats["duplicate_companies"],
-                        "Duplicate Websites Removed": stats["duplicate_websites"],
-                        "Duplicate Emails Removed": stats["duplicate_emails"],
-                        "Missing Values Overview": stats["missing_values"]
-                    })
-
-                st.markdown("### ✨ Cleaned Dataset Preview")
-                st.dataframe(cleaned_df.head(15), use_container_width=True)
+                st.markdown("### Cleaned Dataset Preview")
+                st.dataframe(cdf.head(50), use_container_width=True)
 
     # =========================================================================
-    # TAB 3: GALACTIC 3D BROCHURE EXTRACTION
+    # TAB 3: BROCHURE READER
     # =========================================================================
     with tab3:
-        st.subheader("Step 3: PyMuPDF Galactic Brochure Extraction")
-        st.write("Extract text page-by-page from brochures to build Galactic 3D's manufacturing capability profile.")
+        st.subheader("Step 3: PyMuPDF Brochure Capability Extractor")
+        st.write("Extract capability profile and keywords from Galactic 3D or target competitor brochures.")
 
-        brochure_texts = []
-        file_details = []
+        profile = st.session_state.get("brochure_profile") or get_sample_galactic_profile()
 
-        if use_default_brochures:
-            b_info = read_all_brochures("brochure")
-            if b_info["combined_text"]:
-                brochure_texts.append(b_info["combined_text"])
-                file_details.extend(b_info["files"])
+        st.markdown("### Extracted Capability Profile Summary")
+        st.info(profile.get("capability_summary", "Galactic 3D Manufacturing Profile"))
 
-        if uploaded_brochures:
-            for up_pdf in uploaded_brochures:
-                pdf_bytes = up_pdf.read()
-                res = read_pdf_bytes(pdf_bytes, filename=up_pdf.name)
-                if res["full_text"]:
-                    brochure_texts.append(res["full_text"])
-                    file_details.append(res)
+        st.markdown("### Extracted Target Keyword Taxonomy")
+        kws = profile.get("keywords", [])
+        if kws:
+            kw_chips = " ".join([f"`{kw}`" for kw in kws])
+            st.markdown(kw_chips)
 
-        all_combined_text = "\n\n".join(brochure_texts)
-
-        profile = extract_capabilities(all_combined_text)
-        st.session_state["brochure_profile"] = profile
-
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("Brochure Files Loaded", f"{len(file_details):,}")
-        with c2:
-            st.metric("Capabilities Extracted", f"{len(profile['keywords']):,}")
-
-        st.markdown("### 🛠️ Discovered Manufacturing Capabilities")
-        kw_tags = " ".join([f"`{kw}`" for kw in profile["keywords"]])
-        st.markdown(kw_tags if kw_tags else "_No capabilities discovered_")
-
-        st.markdown("### 📝 Consolidated Galactic Capability Profile")
-        st.info(profile["capability_summary"])
-
-        with st.expander("📄 View Full Raw Text Extracted from Brochures", expanded=False):
-            if all_combined_text:
+        if "full_text" in profile and profile["full_text"]:
+            with st.expander("📄 View Extracted PDF Text Snippets"):
+                all_combined_text = profile["full_text"]
                 st.text_area("Raw Brochure Text", all_combined_text, height=300)
-            else:
-                st.write("No PDF text available.")
 
     # =========================================================================
     # TAB 4: RELEVANCE ANALYSIS & DASHBOARD WITH CITY/STATE FILTERING
@@ -458,8 +443,8 @@ def main():
                 st.markdown("---")
                 st.markdown("## 📈 Results & Relevance Dashboard")
 
-                # CITY / STATE INTERACTIVE FILTER BAR PLACED RIGHT AT THE TOP!
-                f1, f2, f3 = st.columns([2.2, 2, 2.5])
+                # CITY / STATE & VENDOR STATUS INTERACTIVE FILTER BAR
+                f1, f2, f3, f4 = st.columns([2, 1.8, 2.2, 2])
 
                 unique_cities = []
                 if city_col and city_col in adf.columns:
@@ -467,7 +452,7 @@ def main():
 
                 with f1:
                     if unique_cities:
-                        selected_cities = st.multiselect("Select City / State / Location", options=unique_cities, default=unique_cities)
+                        selected_cities = st.multiselect("Select City / Location", options=unique_cities, default=unique_cities)
                     else:
                         selected_cities = []
 
@@ -475,9 +460,14 @@ def main():
                     filter_res = st.multiselect("Filter Classification", ["GOOD", "MODERATE", "BAD"], default=["GOOD", "MODERATE", "BAD"])
 
                 with f3:
-                    search_query = st.text_input("Search Company, Category, or Keyword", value="")
+                    vendor_options = ["With Vendors (Active Buyer 🟢)", "Without Vendors (No Relevant Vendor Need 🔴)", "Uncertain / Insufficient Evidence 🟡"]
+                    avail_vendors = [v for v in vendor_options if v in adf.get("Vendor Status", pd.Series([])).unique()] or vendor_options
+                    selected_vendor_statuses = st.multiselect("Vendor Status Filter", options=vendor_options, default=avail_vendors)
 
-                # Apply Location & Classification Filter FIRST
+                with f4:
+                    search_query = st.text_input("Search Company or Keywords", value="")
+
+                # Apply Filters
                 filtered_adf = adf.copy()
                 if unique_cities and selected_cities:
                     filtered_adf = filtered_adf[filtered_adf[city_col].astype(str).isin(selected_cities)]
@@ -485,7 +475,10 @@ def main():
                 if filter_res:
                     filtered_adf = filtered_adf[filtered_adf["Result"].isin(filter_res)]
 
-                # Metric Cards Calculate GOOD, MODERATE, BAD, TOTAL FOR THE SELECTED LOCATION ONLY!
+                if "Vendor Status" in filtered_adf.columns and selected_vendor_statuses:
+                    filtered_adf = filtered_adf[filtered_adf["Vendor Status"].isin(selected_vendor_statuses)]
+
+                # Metric Cards Calculate GOOD, MODERATE, BAD, TOTAL FOR THE SELECTED FILTERS
                 counts_location = filtered_adf["Result"].value_counts().to_dict()
                 good_cnt_loc = counts_location.get("GOOD", 0)
                 mod_cnt_loc = counts_location.get("MODERATE", 0)
@@ -496,7 +489,7 @@ def main():
                 mod_pct_loc = (mod_cnt_loc / total_cnt_loc * 100) if total_cnt_loc else 0
                 bad_pct_loc = (bad_cnt_loc / total_cnt_loc * 100) if total_cnt_loc else 0
 
-                # Render Metric Cards (Dynamic for Selected Location!)
+                # Render Metric Cards
                 mc1, mc2, mc3, mc4 = st.columns(4)
                 with mc1:
                     st.markdown(
@@ -504,7 +497,7 @@ def main():
                         <div class="metric-card card-good">
                             <div class="card-title">GOOD MATCHES</div>
                             <div class="card-value">{good_cnt_loc:,}</div>
-                            <div class="card-subtitle">{good_pct_loc:.1f}% of selected location</div>
+                            <div class="card-subtitle">{good_pct_loc:.1f}% of selected filters</div>
                         </div>
                         """,
                         unsafe_allow_html=True
@@ -515,7 +508,7 @@ def main():
                         <div class="metric-card card-moderate">
                             <div class="card-title">MODERATE MATCHES</div>
                             <div class="card-value">{mod_cnt_loc:,}</div>
-                            <div class="card-subtitle">{mod_pct_loc:.1f}% of selected location</div>
+                            <div class="card-subtitle">{mod_pct_loc:.1f}% of selected filters</div>
                         </div>
                         """,
                         unsafe_allow_html=True
@@ -526,7 +519,7 @@ def main():
                         <div class="metric-card card-bad">
                             <div class="card-title">BAD MATCHES</div>
                             <div class="card-value">{bad_cnt_loc:,}</div>
-                            <div class="card-subtitle">{bad_pct_loc:.1f}% of selected location</div>
+                            <div class="card-subtitle">{bad_pct_loc:.1f}% of selected filters</div>
                         </div>
                         """,
                         unsafe_allow_html=True
@@ -537,13 +530,13 @@ def main():
                         <div class="metric-card card-total">
                             <div class="card-title">SELECTED TOTAL</div>
                             <div class="card-value">{total_cnt_loc:,}</div>
-                            <div class="card-subtitle">Location Profiles</div>
+                            <div class="card-subtitle">Filtered Profiles</div>
                         </div>
                         """,
                         unsafe_allow_html=True
                     )
 
-                # Charts Row 1: Pie Donut & Score Histogram (Dynamic for Selected Location!)
+                # Charts Row 1: Pie Donut & Score Histogram
                 ch1, ch2 = st.columns(2)
                 with ch1:
                     fig_pie = plot_classification_pie(filtered_adf)
@@ -557,12 +550,12 @@ def main():
                 fig_kw = plot_top_keywords_bar(filtered_adf)
                 st.plotly_chart(fig_kw, use_container_width=True)
 
-                # Excel Downloads Section (Location Filtered!)
+                # Excel Downloads Section
                 st.markdown("---")
-                st.markdown("### 📥 Excel Report Downloads (Location-Filtered)")
+                st.markdown("### 📥 Excel Report Downloads (Filtered)")
 
                 good_only_filtered_df = filtered_adf[filtered_adf["Result"] == "GOOD"].copy()
-                original_cols = [c for c in target_df.columns if c not in ["Match Score", "Result", "Reason"]]
+                original_cols = [c for c in target_df.columns if c not in ["Match Score", "Result", "Vendor Status", "Reason"]]
                 good_clean_original_df = good_only_filtered_df[original_cols] if not good_only_filtered_df.empty else pd.DataFrame()
 
                 excel_good_clean_bytes = generate_excel_download(good_clean_original_df)
@@ -581,17 +574,17 @@ def main():
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="primary",
                         use_container_width=True,
-                        help="Downloads ONLY the GOOD companies for your selected location containing strictly your original uploaded Excel columns, without appending Match Score, Result, or Reason."
+                        help="Downloads ONLY GOOD companies containing strictly your original uploaded Excel columns."
                     )
                 with exp2:
                     st.download_button(
-                        label=f"📊 Download GOOD Leads (With Audit Scores)",
+                        label=f"📊 Download GOOD Leads (With Audit Scores & Vendor Status)",
                         data=excel_good_audit_bytes,
                         file_name=f"Galactic_3D_GOOD_Leads_With_Scores.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="secondary",
                         use_container_width=True,
-                        help="Downloads GOOD companies for selected location with all original columns PLUS Match Score, Result, and Reason columns."
+                        help="Downloads GOOD companies with Match Score, Result, Vendor Status, and Reason columns."
                     )
                 with exp3:
                     st.download_button(
@@ -601,7 +594,7 @@ def main():
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="secondary",
                         use_container_width=True,
-                        help="Downloads all filtered companies for selected location with all original columns + scores."
+                        help="Downloads all filtered companies with all original columns + scores and Vendor Status."
                     )
 
                 # Search & Filter Table

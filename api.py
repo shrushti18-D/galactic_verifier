@@ -1,13 +1,14 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import pandas as pd
 import re
 from urllib.parse import urlparse
 
 from brochure_reader import read_pdf_bytes, extract_capabilities
-from analyzer import analyze_companies_batch, INDUSTRY_SYNONYMS
+from analyzer import analyze_companies_batch, score_procurement_buyer_intent, INDUSTRY_SYNONYMS
+from vendor_crawler import deep_verify_vendor_intent
 
 app = FastAPI(title="Galactic Verifier API")
 
@@ -27,54 +28,6 @@ class CompanyAnalysisRequest(BaseModel):
     title: Optional[str] = ""
     description: Optional[str] = ""
     content: Optional[str] = ""
-
-
-# Authoritative Procurement & Vendor Intent Signals
-VENDOR_INTENT_TERMS = [
-    "vendor registration", "vendor list", "approved vendor", "approved suppliers",
-    "supplier portal", "vendor portal", "issue rfq", "rfq", "rfp", "procurement",
-    "subcontracting", "subcontractor", "vendor empanelment", "supplier onboarding",
-    "seeking suppliers", "seeking vendors", "looking for vendors", "outsourcing",
-    "tier 1 supplier", "tier 2 supplier", "tier-1 supplier", "vendor network",
-    "supply chain partner", "vendor", "vendors", "supplier", "suppliers"
-]
-
-DIRECT_INHOUSE_TERMS = [
-    "100% in-house", "captive unit", "single-site manufacturing", "zero third-party",
-    "in-house tool room", "in-house manufacturing"
-]
-
-
-def detect_vendor_buyer_intent(text: str, url: str = "") -> tuple[bool, str, List[str]]:
-    """
-    Analyzes webpage content for active Vendor Buyer & Procurement Intent Signals.
-    Returns (has_vendor_intent, vendor_status_text, matched_vendor_signals).
-    """
-    text_clean = text.lower()
-    url_clean = url.lower()
-    matched_signals = []
-
-    # Check URL path signals (e.g. /vendors, /procurement, /rfq)
-    for path_term in ["vendor", "supplier", "procurement", "rfq", "subcontract"]:
-        if path_term in url_clean:
-            matched_signals.append(f"URL Path ({path_term.title()})")
-
-    # Check Text Procurement Terms
-    for term in VENDOR_INTENT_TERMS:
-        if re.search(r'\b' + re.escape(term) + r'\b', text_clean):
-            matched_signals.append(term.title())
-
-    # Deduplicate signals
-    matched_signals = list(dict.fromkeys(matched_signals))
-
-    has_intent = len(matched_signals) > 0
-
-    if has_intent:
-        vendor_status = "With Vendors (Active Buyer 🟢)"
-    else:
-        vendor_status = "Without Vendors (No Vendor Need 🔴)"
-
-    return has_intent, vendor_status, matched_signals
 
 
 @app.get("/")
@@ -123,7 +76,7 @@ async def analyze_brochure(file: UploadFile = File(...)):
 async def analyze_company(req: CompanyAnalysisRequest):
     """
     Live Company Webpage Analysis Endpoint for Chrome Extension (Mode 1).
-    Performs Vendor Buyer Intent Segregation & ML Capability Match Scoring.
+    Performs Two-Stage Contextual Vendor Verification & ML Capability Match Scoring.
     """
     title = (req.title or "").strip()
     description = (req.description or "").strip()
@@ -158,8 +111,46 @@ async def analyze_company(req: CompanyAnalysisRequest):
     if len(words) < 5:
         combined_text = f"{company_name} {domain} online web application software platform".strip()
 
-    # Run Vendor Buyer Intent Detection
-    has_vendor_intent, vendor_status, vendor_signals = detect_vendor_buyer_intent(combined_text, raw_url)
+    # Stage 1: Contextual Scikit-Learn TF-IDF Procurement Intent Scoring
+    stage1_eval = score_procurement_buyer_intent(combined_text, raw_url)
+    vendor_status = stage1_eval["status"]
+    has_vendor_intent = stage1_eval["has_intent"]
+    confidence = stage1_eval["confidence"]
+    vendor_signals = stage1_eval["signals"]
+    evidence_reason = stage1_eval["reason"]
+
+    preserved_evidence: Dict[str, Any] = {
+        "source_url": raw_url,
+        "page_title": title[:100] or domain,
+        "snippet": combined_text[:250],
+        "matched_signals": vendor_signals,
+        "relevance_score": stage1_eval["intent_score"],
+        "confidence": confidence,
+        "reason": evidence_reason
+    }
+
+    # Stage 2: Trigger Playwright Deep Verification ONLY when Stage 1 is Uncertain and a valid HTTP URL is present
+    if vendor_status == "Uncertain / Insufficient Evidence 🟡" and raw_url.startswith(("http://", "https://")):
+        try:
+            stage2_evidence = deep_verify_vendor_intent(raw_url, timeout_ms=6000)
+            if stage2_evidence.get("success") and stage2_evidence.get("has_vendor_intent"):
+                vendor_status = "With Vendors (Active Buyer 🟢)"
+                has_vendor_intent = True
+                confidence = stage2_evidence.get("confidence", 0.85)
+                vendor_signals = stage2_evidence.get("matched_signals", [])
+                evidence_reason = stage2_evidence.get("reason", "Playwright deep scan verified procurement portal.")
+
+                preserved_evidence = {
+                    "source_url": stage2_evidence.get("source_url", raw_url),
+                    "page_title": stage2_evidence.get("page_title", title[:100]),
+                    "snippet": stage2_evidence.get("snippet", combined_text[:250]),
+                    "matched_signals": vendor_signals,
+                    "relevance_score": stage2_evidence.get("relevance_score", 85.0),
+                    "confidence": confidence,
+                    "reason": evidence_reason
+                }
+        except Exception as p_err:
+            pass  # Graceful fallback to Stage 1 result
 
     # Construct inputs for analyzer.py ML engine
     category_text = f"{description} {title} {combined_text}".strip()
@@ -197,16 +188,15 @@ async def analyze_company(req: CompanyAnalysisRequest):
         }
 
     raw_match_score = float(analyzed_df["Match Score"].iloc[0])
-    raw_result_class = str(analyzed_df["Result"].iloc[0])
     raw_reason_str = str(analyzed_df["Reason"].iloc[0])
 
-    # Apply Vendor Intent Weighting Matrix
-    if has_vendor_intent:
-        # Company actively hires vendors: Boost score by +15 points (capped at 100)
+    # Apply 3-State Vendor Intent Weighting Matrix
+    if vendor_status == "With Vendors (Active Buyer 🟢)":
         match_score = min(round(raw_match_score + 15.0, 1), 100.0)
-    else:
-        # Company has NO vendor buying intent: Hard-cap score at max 40 (BAD MATCH)
-        match_score = min(raw_match_score, 40.0)
+    elif vendor_status == "Without Vendors (No Relevant Vendor Need 🔴)":
+        match_score = min(raw_match_score, 35.0)
+    else:  # Uncertain / Insufficient Evidence 🟡
+        match_score = raw_match_score
 
     # Recalculate classification result
     if match_score >= 75.0:
@@ -216,16 +206,11 @@ async def analyze_company(req: CompanyAnalysisRequest):
     else:
         result_class = "BAD"
 
-    # Construct enhanced explanation reason with Vendor Segregation info
-    vendor_reason_part = f"Vendor Status: {vendor_status}"
-    if vendor_signals:
-        vendor_reason_part += f" (Signals: {', '.join(vendor_signals[:3])})"
-
-    reason_str = f"{vendor_reason_part} | {raw_reason_str}"
+    reason_str = f"Vendor Status: {vendor_status} | {raw_reason_str}"
 
     # Extract matched capabilities/keywords list for visual chips in Chrome extension
     matched_capabilities: List[str] = []
-    category_matched = "General Business / Web App"
+    category_matched = "General Business"
 
     if "Matched keywords:" in raw_reason_str:
         kw_part = raw_reason_str.split("Matched keywords:")[1].split("|")[0].strip()
@@ -258,7 +243,9 @@ async def analyze_company(req: CompanyAnalysisRequest):
         "match_score": match_score,
         "vendor_status": vendor_status,
         "has_vendor_intent": has_vendor_intent,
+        "vendor_confidence": confidence,
         "vendor_signals": vendor_signals,
+        "vendor_evidence": preserved_evidence,
         "category": category_matched,
         "matched_capabilities": matched_capabilities,
         "reason": reason_str
