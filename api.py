@@ -195,8 +195,8 @@ async def analyze_company(req: CompanyAnalysisRequest):
         match_score = min(round(raw_match_score + 15.0, 1), 100.0)
     elif vendor_status == "Without Vendors (No Relevant Vendor Need 🔴)":
         match_score = min(raw_match_score, 35.0)
-    else:  # Uncertain / Insufficient Evidence 🟡
-        match_score = raw_match_score
+    else:  # Uncertain / Insufficient Evidence 🟡: Cannot be GOOD MATCH without verified vendor portal
+        match_score = min(raw_match_score, 55.0)
 
     # Recalculate classification result
     if match_score >= 75.0:
