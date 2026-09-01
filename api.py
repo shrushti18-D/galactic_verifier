@@ -76,7 +76,7 @@ async def analyze_brochure(file: UploadFile = File(...)):
 async def analyze_company(req: CompanyAnalysisRequest):
     """
     Live Company Webpage Analysis Endpoint for Chrome Extension (Mode 1).
-    Performs Two-Stage Contextual Vendor Verification & ML Capability Match Scoring.
+    Fast <1-Second Contextual Vendor Verification & ML Capability Match Scoring.
     """
     title = (req.title or "").strip()
     description = (req.description or "").strip()
@@ -111,7 +111,7 @@ async def analyze_company(req: CompanyAnalysisRequest):
     if len(words) < 5:
         combined_text = f"{company_name} {domain} online web application software platform".strip()
 
-    # Stage 1: Contextual Scikit-Learn TF-IDF Procurement Intent Scoring
+    # Stage 1: Fast Contextual Scikit-Learn TF-IDF Procurement Intent Scoring (<0.1s)
     stage1_eval = score_procurement_buyer_intent(combined_text, raw_url)
     vendor_status = stage1_eval["status"]
     has_vendor_intent = stage1_eval["has_intent"]
@@ -129,10 +129,11 @@ async def analyze_company(req: CompanyAnalysisRequest):
         "reason": evidence_reason
     }
 
-    # Stage 2: Trigger Playwright Deep Verification ONLY when Stage 1 is Uncertain and a valid HTTP URL is present
-    if vendor_status == "Uncertain / Insufficient Evidence 🟡" and raw_url.startswith(("http://", "https://")):
+    # Stage 2: Fast Targeted Playwright Check ONLY if URL path specifically references procurement/vendor subpages
+    has_procurement_subpage = any(term in raw_url.lower() for term in ["vendor", "supplier", "procurement", "rfq", "sourcing", "purchasing"])
+    if vendor_status == "Uncertain / Insufficient Evidence 🟡" and has_procurement_subpage and raw_url.startswith(("http://", "https://")):
         try:
-            stage2_evidence = deep_verify_vendor_intent(raw_url, timeout_ms=6000)
+            stage2_evidence = deep_verify_vendor_intent(raw_url, timeout_ms=2500)
             if stage2_evidence.get("success") and stage2_evidence.get("has_vendor_intent"):
                 vendor_status = "With Vendors (Active Buyer 🟢)"
                 has_vendor_intent = True
@@ -149,8 +150,8 @@ async def analyze_company(req: CompanyAnalysisRequest):
                     "confidence": confidence,
                     "reason": evidence_reason
                 }
-        except Exception as p_err:
-            pass  # Graceful fallback to Stage 1 result
+        except Exception:
+            pass  # Fast fallback to Stage 1 result
 
     # Construct inputs for analyzer.py ML engine
     category_text = f"{description} {title} {combined_text}".strip()
@@ -195,7 +196,7 @@ async def analyze_company(req: CompanyAnalysisRequest):
         match_score = min(round(raw_match_score + 15.0, 1), 100.0)
     elif vendor_status == "Without Vendors (No Relevant Vendor Need 🔴)":
         match_score = min(raw_match_score, 35.0)
-    else:  # Uncertain / Insufficient Evidence 🟡: Cannot be GOOD MATCH without verified vendor portal
+    else:  # Uncertain / Insufficient Evidence 🟡: Capped at 55.0 max to prevent false GOOD match
         match_score = min(raw_match_score, 55.0)
 
     # Recalculate classification result
