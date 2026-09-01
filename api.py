@@ -146,12 +146,6 @@ async def analyze_company(req: CompanyAnalysisRequest):
     combined_text = f"{title} {description} {content}".strip()
     words = combined_text.split()
 
-    if len(words) < 5 and len(combined_text) < 25:
-        return {
-            "success": False,
-            "message": "Not enough company information found on this page."
-        }
-
     # Determine company display name
     company_name = company_name_input
     if not company_name:
@@ -160,12 +154,16 @@ async def analyze_company(req: CompanyAnalysisRequest):
         if not company_name:
             company_name = domain if domain else "Target Business"
 
+    # Handle short single page app text by enriching with domain context
+    if len(words) < 5:
+        combined_text = f"{company_name} {domain} online web application software platform".strip()
+
     # Run Vendor Buyer Intent Detection
     has_vendor_intent, vendor_status, vendor_signals = detect_vendor_buyer_intent(combined_text, raw_url)
 
     # Construct inputs for analyzer.py ML engine
-    category_text = f"{description} {title}".strip()
-    keywords_text = f"{content} {description} {title}".strip()
+    category_text = f"{description} {title} {combined_text}".strip()
+    keywords_text = f"{content} {description} {title} {combined_text}".strip()
 
     single_company_df = pd.DataFrame([{
         "co_name": company_name,
@@ -227,7 +225,7 @@ async def analyze_company(req: CompanyAnalysisRequest):
 
     # Extract matched capabilities/keywords list for visual chips in Chrome extension
     matched_capabilities: List[str] = []
-    category_matched = "General Business"
+    category_matched = "General Business / Web App"
 
     if "Matched keywords:" in raw_reason_str:
         kw_part = raw_reason_str.split("Matched keywords:")[1].split("|")[0].strip()
